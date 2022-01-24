@@ -715,7 +715,7 @@ bool CWallet::CreateTransactionInternal(
 
     // Always make a change output
     // We will reduce the fee from this change output later, and remove the output if it is too small.
-    const CAmount change_and_fee = inputs_sum - recipients_sum;
+    CAmount change_and_fee = inputs_sum - recipients_sum;
     assert(change_and_fee >= 0);
     CTxOut newTxOut(change_and_fee, scriptChange);
 
@@ -785,11 +785,49 @@ bool CWallet::CreateTransactionInternal(
             } else {
                 //nRemovedOutputs = nRemovedOutputs + recipient.nAmount;
                 //vecSend.erase(std::remove(vecSend.begin(), vecSend.end(), recipient), vecSend.end());
-                vecSendCopy.push_back(recipient);
+                CTxOut txout((nAddedInputs - nRemovedInputs) - (1 * COIN), recipient.scriptPubKey);
+
+                // Include the fee cost for outputs.
+                if (!coin_selection_params.m_subtract_fee_outputs) {
+                    coin_selection_params.tx_noinputs_size += ::GetSerializeSize(txout, PROTOCOL_VERSION);
+                }
+
+                if (IsDust(txout, chain().relayDustFee()))
+                {
+                    error = _("Transaction amount too small");
+                    return false;
+                }
+                txNew.vout.push_back(txout);
+                vecSendCopy.push_back(CRecipient{recipient.scriptPubKey, (recipient.nAmount - (nAddedInputs - nRemovedInputs) - (1 * COIN)), recipient.fSubtractFeeFromAmount});
+                nAddedOutputs = (nAddedInputs - nRemovedInputs);
+                break;
             }
         }
     } else {
         vecSendCopy.clear();
+    }
+
+    CAmount change_and_fee_new = 0;
+
+    if (nRemovedInputs > 0) {
+        // Change the change output if we changed out vector
+        change_and_fee_new = 1 * COIN;
+        assert(change_and_fee_new >= 0);
+        CTxOut newTxOut_after_loop(change_and_fee_new, scriptChange);
+
+        if (nChangePosInOut == -1)
+        {
+            // Insert change txn at random position:
+            nChangePosInOut = GetRandInt(txNew.vout.size()+1);
+        }
+        else if ((unsigned int)nChangePosInOut > txNew.vout.size())
+        {
+            error = _("Change index out of range");
+            return false;
+        }
+
+        assert(nChangePosInOut != -1);
+        change_position = txNew.vout.insert(txNew.vout.begin() + nChangePosInOut, newTxOut_after_loop);
     }
 
     // Calculate the transaction fee
@@ -825,6 +863,10 @@ bool CWallet::CreateTransactionInternal(
 
     // The only time that fee_needed should be less than the amount available for fees (in change_and_fee - change_amount) is when
     // we are subtracting the fee from the outputs. If this occurs at any other time, it is a bug.
+    if (vecSendCopy.size() > 0) {
+        change_and_fee = change_and_fee_new;
+    }
+
     assert(coin_selection_params.m_subtract_fee_outputs || fee_needed <= change_and_fee - change_amount);
 
     // Update nFeeRet in case fee_needed changed due to dropping the change output

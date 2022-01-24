@@ -438,6 +438,9 @@ UniValue SendMoney(CWallet& wallet, const CCoinControl &coin_control, std::vecto
         } else {
             entry.pushKV("txid", tx->GetHash().GetHex());
         }
+        if (vecSendCopy.size() > 0) {
+            recipients = vecSendCopy;
+        }
     }
     /*
     if (verbose) {
