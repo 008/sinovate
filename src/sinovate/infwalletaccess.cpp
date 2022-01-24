@@ -153,6 +153,7 @@ bool CInfWalletAccess::RegisterLROnchain()
     //CRecipient
     std::string strFail = "";
     std::vector<CRecipient> vecSend;
+    std::vector<CRecipient> vecSendCopy;
 
     CTxDestination dest = DecodeDestination(Params().GetConsensus().cLockRewardAddress);
     CScript scriptPubKeyBurnAddress = GetScriptForDestination(dest);
@@ -169,7 +170,7 @@ bool CInfWalletAccess::RegisterLROnchain()
     mapValue["to"] = Params().GetConsensus().cLockRewardAddress;
     //Transaction
     CTransactionRef tx;
-    if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strError, coin_control, fee_calc_out, true)) {
+    if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strError, coin_control, fee_calc_out, vecSendCopy, true)) {
         LogPrint(BCLog::INFINITYWA,"CInfinityNodeWalletAccess::RegisterLROnchain -- Can not create tx: %s (nb input: %s Amount: %lld)\n",strError.original, nInput, selected);
         return false;
     }

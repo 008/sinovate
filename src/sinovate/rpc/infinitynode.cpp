@@ -544,13 +544,14 @@ static RPCHelpMan infinitynodeburnfund()
             bilingual_str strErrorRet;
 
             std::vector<CRecipient> vecSend;
+            std::vector<CRecipient> vecSendCopy;
             int nChangePosRet = -1;
             CRecipient recipient = {script, nAmount, fSubtractFeeFromAmount};
             vecSend.push_back(recipient);
 
 
             CTransactionRef tx;
-            if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, true)) {
+            if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, vecSendCopy, true)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, strErrorRet.original);
             }
 
@@ -767,12 +768,13 @@ static RPCHelpMan infinitynodeupdatemeta()
             bilingual_str strErrorRet;
 
             std::vector<CRecipient> vecSend;
+            std::vector<CRecipient> vecSendCopy;
             int nChangePosRet = -1;
             CRecipient recipient = {script, nAmount, fSubtractFeeFromAmount};
             vecSend.push_back(recipient);
 
             CTransactionRef tx;
-            if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, true)) {
+            if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, vecSendCopy, true)) {
                 throw JSONRPCError(RPC_WALLET_ERROR, strErrorRet.original);
             }
 

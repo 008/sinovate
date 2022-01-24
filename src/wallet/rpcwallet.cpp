@@ -413,27 +413,40 @@ UniValue SendMoney(CWallet& wallet, const CCoinControl &coin_control, std::vecto
         throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
     }
 
+    std::vector<CRecipient> vecSendCopy;
+    vecSendCopy.push_back(*recipients.begin()); // Fill dummy with first from our recipients
+
     // Shuffle recipient list
     std::shuffle(recipients.begin(), recipients.end(), FastRandomContext());
+    UniValue entry(UniValue::VOBJ);
 
-    // Send
-    CAmount nFeeRequired = 0;
-    int nChangePosRet = -1;
-    bilingual_str error;
-    CTransactionRef tx;
-    FeeCalculation fee_calc_out;
-    const bool fCreated = wallet.CreateTransaction(recipients, tx, nFeeRequired, nChangePosRet, error, coin_control, fee_calc_out, true);
-    if (!fCreated) {
-        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, error.original);
+    while (vecSendCopy.size() > 0) {
+        // Send
+        CAmount nFeeRequired = 0;
+        int nChangePosRet = -1;
+        bilingual_str error;
+        CTransactionRef tx;
+        FeeCalculation fee_calc_out;
+        const bool fCreated = wallet.CreateTransaction(recipients, tx, nFeeRequired, nChangePosRet, error, coin_control, fee_calc_out, vecSendCopy, true);
+        if (!fCreated) {
+            throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, error.original);
+        }
+        wallet.CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
+        if (verbose) {
+            entry.pushKV("txid", tx->GetHash().GetHex());
+            entry.pushKV("fee_reason", StringForFeeReason(fee_calc_out.reason));
+        } else {
+            entry.pushKV("txid", tx->GetHash().GetHex());
+        }
     }
-    wallet.CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
+    /*
     if (verbose) {
         UniValue entry(UniValue::VOBJ);
         entry.pushKV("txid", tx->GetHash().GetHex());
         entry.pushKV("fee_reason", StringForFeeReason(fee_calc_out.reason));
         return entry;
-    }
-    return tx->GetHash().GetHex();
+    }*/
+    return entry;
 }
 
 static RPCHelpMan sendtoaddress()
@@ -611,6 +624,7 @@ static RPCHelpMan sendwithlockedtoaddress()
         scriptPubKey = GetTimeLockScriptForDestination(address, pwallet->GetLastBlockHeight()+1+nBlockLocked);
     }
     std::vector<CRecipient> vecSend;
+    std::vector<CRecipient> vecSendCopy;
     CRecipient recipient = {scriptPubKey, nAmount, fSubtractFeeFromAmount};
     vecSend.push_back(recipient);
 
@@ -621,7 +635,7 @@ static RPCHelpMan sendwithlockedtoaddress()
     CCoinControl coin_control;
 
     CTransactionRef tx;
-    bool fCreated = pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, !pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
+    bool fCreated = pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, vecSendCopy, !pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
     if (!fCreated) {
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, strErrorRet.original);
     }

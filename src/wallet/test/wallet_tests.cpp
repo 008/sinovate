@@ -509,8 +509,9 @@ public:
         bilingual_str error;
         CCoinControl dummy;
         FeeCalculation fee_calc_out;
+        CRecipient vecSendCopy;
         {
-            BOOST_CHECK(wallet->CreateTransaction({recipient}, tx, fee, changePos, error, dummy, fee_calc_out));
+            BOOST_CHECK(wallet->CreateTransaction({recipient}, tx, fee, changePos, error, dummy, fee_calc_out, {vecSendCopy}));
         }
         wallet->CommitTransaction(tx, {}, {});
         CMutableTransaction blocktx;

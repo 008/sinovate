@@ -173,6 +173,7 @@ Result CreateRateBumpTransaction(CWallet& wallet, const uint256& txid, const CCo
 
     // Fill in recipients(and preserve a single change key if there is one)
     std::vector<CRecipient> recipients;
+    std::vector<CRecipient> vecSendCopy;
     for (const auto& output : wtx.tx->vout) {
         if (!wallet.IsChange(output)) {
             CRecipient recipient = {output.scriptPubKey, output.nValue, false};
@@ -220,7 +221,7 @@ Result CreateRateBumpTransaction(CWallet& wallet, const uint256& txid, const CCo
     int change_pos_in_out = -1; // No requested location for change
     bilingual_str fail_reason;
     FeeCalculation fee_calc_out;
-    if (!wallet.CreateTransaction(recipients, tx_new, fee_ret, change_pos_in_out, fail_reason, new_coin_control, fee_calc_out, false)) {
+    if (!wallet.CreateTransaction(recipients, tx_new, fee_ret, change_pos_in_out, fail_reason, new_coin_control, fee_calc_out, vecSendCopy, false)) {
         errors.push_back(Untranslated("Unable to create transaction.") + Untranslated(" ") + fail_reason);
         return Result::WALLET_ERROR;
     }
