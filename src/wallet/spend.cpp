@@ -752,9 +752,11 @@ bool CWallet::CreateTransactionInternal(
         txNew.vin.push_back(CTxIn(coin.outpoint, CScript(), nSequence));
         nAddedInputs = nAddedInputs + coin.effective_value;
         tx_sizes_test = CalculateMaximumSignedTxSize(CTransaction(txNew), this, coin_control.fAllowWatchOnly);
+        WalletLogPrintf("loopexperiment - added %d, nAddedInputs = %d\n", coin.effective_value, nAddedInputs);
         if (tx_sizes_test.weight > MAX_STANDARD_TX_WEIGHT) {
             txNew.vin.pop_back();
             nRemovedInputs = coin.effective_value;
+            WalletLogPrintf("loopexperiment - removed %d, nRemovedInputs = %d\n", coin.effective_value, nRemovedInputs);
             break;
         }
     }
@@ -780,6 +782,7 @@ bool CWallet::CreateTransactionInternal(
                     error = _("Transaction amount too small");
                     return false;
                 }
+                WalletLogPrintf("loopexperiment - added %d, nAddedOutputs = %d, continuing\n", recipient.nAmount, nAddedOutputs);
                 txNew.vout.push_back(txout);
                 vecSendTemp.push_back(recipient);
             } else {
@@ -797,6 +800,7 @@ bool CWallet::CreateTransactionInternal(
                     error = _("Transaction amount too small");
                     return false;
                 }
+                WalletLogPrintf("loopexperiment - added %d, nAddedOutputs = %d, breaking here\n", recipient.nAmount, nAddedOutputs);
                 txNew.vout.push_back(txout);
                 vecSendCopy.push_back(CRecipient{recipient.scriptPubKey, (recipient.nAmount - (nAddedInputs - nRemovedInputs) - (1 * COIN)), recipient.fSubtractFeeFromAmount});
                 nAddedOutputs = (nAddedInputs - nRemovedInputs);
@@ -828,6 +832,7 @@ bool CWallet::CreateTransactionInternal(
 
         assert(nChangePosInOut != -1);
         change_position = txNew.vout.insert(txNew.vout.begin() + nChangePosInOut, newTxOut_after_loop);
+        WalletLogPrintf("loopexperiment - change_and_fee_new %d, breaking here\n", change_and_fee_new);
     }
 
     // Calculate the transaction fee
@@ -987,8 +992,8 @@ bool CWallet::CreateTransaction(
     int nChangePosIn = nChangePosInOut;
     Assert(!tx); // tx is an out-param. TODO change the return type from bool to tx (or nullptr)
     bool res = CreateTransactionInternal(vecSend, tx, nFeeRet, nChangePosInOut, error, coin_control, fee_calc_out, sign, vecSendCopy);
-    // try with avoidpartialspends unless it's enabled already
-    if (res && nFeeRet > 0 /* 0 means non-functional fee rate estimation */ && m_max_aps_fee > -1 && !coin_control.m_avoid_partial_spends) {
+    // try with avoidpartialspends unless it's enabled already and we're not looping
+    if (res && nFeeRet > 0 /* 0 means non-functional fee rate estimation */ && m_max_aps_fee > -1 && !coin_control.m_avoid_partial_spends && (vecSendCopy.size() > 0)) {
         CCoinControl tmp_cc = coin_control;
         tmp_cc.m_avoid_partial_spends = true;
         CAmount nFeeRet2;
