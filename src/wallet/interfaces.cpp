@@ -247,9 +247,27 @@ public:
         CTransactionRef tx;
         FeeCalculation fee_calc_out;
         BytesBusinessFolder bytes_business;
+        // Wallet comments
+        WalletValueMap map_value;
         if (!m_wallet->CreateTransaction(recipients, tx, fee, change_pos,
                 fail_reason, coin_control, fee_calc_out, bytes_business, sign)) {
             return {};
+        }
+        while (bytes_business.fLatchOn == true && sign == false) { // Monkey business started
+            if (m_wallet->CreateTransaction(recipients, tx, fee, change_pos, fail_reason, coin_control, fee_calc_out, bytes_business, sign)) {
+                m_wallet->CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
+            } else {
+                return {};
+            }
+            if (bytes_business.nDelivered >= bytes_business.nTarget) {
+                // Last run
+                if (m_wallet->CreateTransaction(recipients, tx, fee, change_pos, fail_reason, coin_control, fee_calc_out, bytes_business, sign)) {
+                    m_wallet->CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
+                } else {
+                    return {};
+                }
+                bytes_business.fLatchOn = false;
+            }
         }
         return tx;
     }
