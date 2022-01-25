@@ -243,12 +243,12 @@ public:
         CAmount& fee,
         bilingual_str& fail_reason) override
     {
-        std::vector<CRecipient> vecSendCopy;
         LOCK(m_wallet->cs_wallet);
         CTransactionRef tx;
         FeeCalculation fee_calc_out;
+        BytesBusinessFolder bytes_business;
         if (!m_wallet->CreateTransaction(recipients, tx, fee, change_pos,
-                fail_reason, coin_control, fee_calc_out, vecSendCopy, sign)) {
+                fail_reason, coin_control, fee_calc_out, bytes_business, sign)) {
             return {};
         }
         return tx;

@@ -413,42 +413,45 @@ UniValue SendMoney(CWallet& wallet, const CCoinControl &coin_control, std::vecto
         throw JSONRPCError(RPC_WALLET_ERROR, "Error: Private keys are disabled for this wallet");
     }
 
-    std::vector<CRecipient> vecSendCopy;
-    vecSendCopy.push_back(*recipients.begin()); // Fill dummy with first from our recipients
-
     // Shuffle recipient list
     std::shuffle(recipients.begin(), recipients.end(), FastRandomContext());
     UniValue entry(UniValue::VOBJ);
 
-    while (vecSendCopy.size() > 0) {
-        // Send
-        CAmount nFeeRequired = 0;
-        int nChangePosRet = -1;
-        bilingual_str error;
-        CTransactionRef tx;
-        FeeCalculation fee_calc_out;
-        const bool fCreated = wallet.CreateTransaction(recipients, tx, nFeeRequired, nChangePosRet, error, coin_control, fee_calc_out, vecSendCopy, true);
-        if (!fCreated) {
+    // Send
+    CAmount nFeeRequired = 0;
+    int nChangePosRet = -1;
+    bilingual_str error;
+    CTransactionRef tx;
+    FeeCalculation fee_calc_out;
+    BytesBusinessFolder bytes_business;
+    const bool fCreated = wallet.CreateTransaction(recipients, tx, nFeeRequired, nChangePosRet, error, coin_control, fee_calc_out, bytes_business,true);
+    if (!fCreated) {
+        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, error.original);
+    }
+    wallet.CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
+
+    while (bytes_business.fLatchOn == true) { // Monkey business started
+        if (wallet.CreateTransaction(recipients, tx, nFeeRequired, nChangePosRet, error, coin_control, fee_calc_out, bytes_business, true)) {
+            wallet.CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
+        } else {
             throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, error.original);
         }
-        wallet.CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
-        if (verbose) {
-            entry.pushKV("txid", tx->GetHash().GetHex());
-            entry.pushKV("fee_reason", StringForFeeReason(fee_calc_out.reason));
-        } else {
-            entry.pushKV("txid", tx->GetHash().GetHex());
-        }
-        if (vecSendCopy.size() > 0) {
-            recipients = vecSendCopy;
+        if (bytes_business.nDelivered >= bytes_business.nTarget) {
+            // Last run
+            if (wallet.CreateTransaction(recipients, tx, nFeeRequired, nChangePosRet, error, coin_control, fee_calc_out, bytes_business, true)) {
+                wallet.CommitTransaction(tx, std::move(map_value), {} /* orderForm */);
+                if (verbose) {
+                    entry.pushKV("txid", tx->GetHash().GetHex());
+                    entry.pushKV("fee_reason", StringForFeeReason(fee_calc_out.reason));
+                } else {
+                    entry.pushKV("txid", tx->GetHash().GetHex());
+                }
+            } else {
+                throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, error.original);
+            }
+            bytes_business.fLatchOn = false;
         }
     }
-    /*
-    if (verbose) {
-        UniValue entry(UniValue::VOBJ);
-        entry.pushKV("txid", tx->GetHash().GetHex());
-        entry.pushKV("fee_reason", StringForFeeReason(fee_calc_out.reason));
-        return entry;
-    }*/
     return entry;
 }
 
@@ -627,7 +630,6 @@ static RPCHelpMan sendwithlockedtoaddress()
         scriptPubKey = GetTimeLockScriptForDestination(address, pwallet->GetLastBlockHeight()+1+nBlockLocked);
     }
     std::vector<CRecipient> vecSend;
-    std::vector<CRecipient> vecSendCopy;
     CRecipient recipient = {scriptPubKey, nAmount, fSubtractFeeFromAmount};
     vecSend.push_back(recipient);
 
@@ -638,7 +640,8 @@ static RPCHelpMan sendwithlockedtoaddress()
     CCoinControl coin_control;
 
     CTransactionRef tx;
-    bool fCreated = pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, vecSendCopy, !pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
+    BytesBusinessFolder bytes_business;
+    bool fCreated = pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strErrorRet, coin_control, fee_calc_out, bytes_business, !pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
     if (!fCreated) {
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, strErrorRet.original);
     }

@@ -63,6 +63,13 @@ struct EstimatorBucket
     double leftMempool = 0;
 };
 
+/* Used to return detailed information about "the Bytes Business" */
+struct BytesBusinessFolder {
+    bool fLatchOn;
+    CAmount nTarget = 0;
+    CAmount nDelivered = 0;
+};
+
 /* Used to return detailed information about a fee estimate calculation */
 struct EstimationResult
 {

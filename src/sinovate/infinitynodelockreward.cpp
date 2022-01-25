@@ -1935,7 +1935,6 @@ bool CInfinityNodeLockReward::AutoResigterLockReward(std::string sLockReward, st
     //CRecipient
     std::string strFail = "";
     std::vector<CRecipient> vecSend;
-    std::vector<CRecipient> vecSendCopy;
 
     CTxDestination dest = DecodeDestination(Params().GetConsensus().cLockRewardAddress);
     CScript scriptPubKeyBurnAddress = GetScriptForDestination(dest);
@@ -1952,7 +1951,8 @@ bool CInfinityNodeLockReward::AutoResigterLockReward(std::string sLockReward, st
     mapValue["to"] = Params().GetConsensus().cLockRewardAddress;
     //Transaction
     CTransactionRef tx;
-    if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strError, coin_control, fee_calc_out, vecSendCopy, true)) {
+    BytesBusinessFolder bytes_business;
+    if (!pwallet->CreateTransaction(vecSend, tx, nFeeRequired, nChangePosRet, strError, coin_control, fee_calc_out, bytes_business, true)) {
         strErrorRet = strError.original;
         return false;
     }

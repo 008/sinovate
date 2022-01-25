@@ -576,8 +576,8 @@ bool CWallet::CreateTransactionInternal(
         bilingual_str& error,
         const CCoinControl& coin_control,
         FeeCalculation& fee_calc_out,
-        bool sign,
-        std::vector<CRecipient>& vecSendCopy)
+        BytesBusinessFolder& bytes_business,
+        bool sign)
 {
     AssertLockHeld(cs_wallet);
 
@@ -677,10 +677,10 @@ bool CWallet::CreateTransactionInternal(
     if (!coin_selection_params.m_subtract_fee_outputs) {
         coin_selection_params.tx_noinputs_size = 11; // Static vsize overhead + outputs vsize. 4 nVersion, 4 nLocktime, 1 input count, 1 output count, 1 witness overhead (dummy, flag, stack size)
     }
-    CAmount nTarget = 0;
+    CAmount nOGTarget = 0; // OG amount we wanted to send before bytes business
     for (const auto& recipient : vecSend)
     {
-        nTarget = nTarget + recipient.nAmount;
+        nOGTarget = nOGTarget + recipient.nAmount;
         CTxOut txout(recipient.nAmount, recipient.scriptPubKey);
 
         // Include the fee cost for outputs.
@@ -746,85 +746,65 @@ bool CWallet::CreateTransactionInternal(
     // and in the spirit of "smallest possible change from prior
     // behavior."
     TxSize tx_sizes_test;
-    CAmount nAddedInputs = 0, nRemovedInputs = 0, nAddedOutputs = 0, nRemovedOutputs = 0;
+    CAmount nAddedInputs = 0, nRemovedInputs = 0;
     const uint32_t nSequence = coin_control.m_signal_bip125_rbf.value_or(m_signal_rbf) ? MAX_BIP125_RBF_SEQUENCE : (CTxIn::SEQUENCE_FINAL - 1);
     for (const auto& coin : selected_coins) {
         txNew.vin.push_back(CTxIn(coin.outpoint, CScript(), nSequence));
-        nAddedInputs = nAddedInputs + coin.effective_value;
+        nAddedInputs += coin.effective_value;
         tx_sizes_test = CalculateMaximumSignedTxSize(CTransaction(txNew), this, coin_control.fAllowWatchOnly);
-        WalletLogPrintf("loopexperiment - added %d, nAddedInputs = %d\n", coin.effective_value, nAddedInputs);
         if (tx_sizes_test.weight > MAX_STANDARD_TX_WEIGHT) {
             txNew.vin.pop_back();
             nRemovedInputs = coin.effective_value;
-            WalletLogPrintf("loopexperiment - removed %d, nRemovedInputs = %d\n", coin.effective_value, nRemovedInputs);
             break;
         }
     }
-    std::vector<CRecipient> vecSendTemp;
-    if (nRemovedInputs > 0) {
-        vecSendCopy.clear();
-        // Since we just removed inputs to make sure we don't 
-        // make a too large transaction, re-do the txout and make sure we pay everything we can to the recipient(s)
-        txNew.vout.clear();
-        for (const auto& recipient : vecSend)
-        {
-            nAddedOutputs = nAddedOutputs + recipient.nAmount;
-            if (nAddedOutputs < (nAddedInputs - nRemovedInputs)) {
-                CTxOut txout(recipient.nAmount, recipient.scriptPubKey);
-
-                // Include the fee cost for outputs.
-                if (!coin_selection_params.m_subtract_fee_outputs) {
-                    coin_selection_params.tx_noinputs_size += ::GetSerializeSize(txout, PROTOCOL_VERSION);
-                }
-
-                if (IsDust(txout, chain().relayDustFee()))
-                {
-                    error = _("Transaction amount too small");
-                    return false;
-                }
-                WalletLogPrintf("loopexperiment - added %d, nAddedOutputs = %d, continuing\n", recipient.nAmount, nAddedOutputs);
-                txNew.vout.push_back(txout);
-                vecSendTemp.push_back(recipient);
-            } else {
-                //nRemovedOutputs = nRemovedOutputs + recipient.nAmount;
-                //vecSend.erase(std::remove(vecSend.begin(), vecSend.end(), recipient), vecSend.end());
-                CTxOut txout((nAddedInputs - nRemovedInputs) - (1 * COIN), recipient.scriptPubKey);
-
-                // Include the fee cost for outputs.
-                if (!coin_selection_params.m_subtract_fee_outputs) {
-                    coin_selection_params.tx_noinputs_size += ::GetSerializeSize(txout, PROTOCOL_VERSION);
-                }
-
-                if (IsDust(txout, chain().relayDustFee()))
-                {
-                    error = _("Transaction amount too small");
-                    return false;
-                }
-                WalletLogPrintf("loopexperiment - added %d, nAddedOutputs = %d, breaking here\n", recipient.nAmount, nAddedOutputs);
-                txNew.vout.push_back(txout);
-                vecSendCopy.push_back(CRecipient{recipient.scriptPubKey, (recipient.nAmount - (nAddedInputs - nRemovedInputs) - (1 * COIN)), recipient.fSubtractFeeFromAmount});
-                nAddedOutputs = (nAddedInputs - nRemovedInputs);
-                break;
-            }
-        }
-    } else {
-        vecSendCopy.clear();
-    }
 
     CAmount change_and_fee_new = 0;
-
     if (nRemovedInputs > 0) {
+        // Get change
         // Change the change output if we changed out vector
-        change_and_fee_new = 1 * COIN;
+        change_and_fee_new = (nAddedInputs - (nAddedInputs - nRemovedInputs));
         assert(change_and_fee_new >= 0);
+        // start up the bytes business ser
+        if (bytes_business.fLatchOn == false && bytes_business.nDelivered != 0)
+            bytes_business.fLatchOn = true;
+            bytes_business.nTarget = nOGTarget;
+        if(!coin_selection_params.m_subtract_fee_outputs) {
+            coin_selection_params.tx_noinputs_size = 11; //kick this down to avg
+        }
+
+        // Since we just removed inputs to make sure we don't 
+        // make a too large transaction, re-do the txout and make sure we pay everything we can to ourselves
+        txNew.vout.clear();
+        // Get change
+        CTxDestination dest;
+        std::string dest_err;
+        if (!reservedest.GetReservedDestination(dest, true, dest_err)) {
+            error = strprintf(_("Transaction needs a change address, but we can't generate it. %s"), dest_err);
+        }
+        CScript scriptChangeNew = GetScriptForDestination(dest);
+        CHECK_NONFATAL(IsValidDestination(dest) != scriptChangeNew.empty());
+        CTxOut txout((nAddedInputs - nRemovedInputs - change_and_fee_new), scriptChangeNew);
+
+        // Include the fee cost for outputs.
+        if (!coin_selection_params.m_subtract_fee_outputs) {
+            coin_selection_params.tx_noinputs_size += ::GetSerializeSize(txout, PROTOCOL_VERSION);
+        }
+
+        if (IsDust(txout, chain().relayDustFee()))
+        {
+            error = _("Transaction amount too small");
+            return false;
+        }
+        txNew.vout.push_back(txout);
+
+        // Push change
         CTxOut newTxOut_after_loop(change_and_fee_new, scriptChange);
 
-        if (nChangePosInOut == -1)
-        {
-            // Insert change txn at random position:
-            nChangePosInOut = GetRandInt(txNew.vout.size()+1);
-        }
-        else if ((unsigned int)nChangePosInOut > txNew.vout.size())
+        // Insert change txn at random position:
+        nChangePosInOut = GetRandInt(txNew.vout.size()+1);
+        
+        if ((unsigned int)nChangePosInOut > txNew.vout.size())
         {
             error = _("Change index out of range");
             return false;
@@ -833,6 +813,7 @@ bool CWallet::CreateTransactionInternal(
         assert(nChangePosInOut != -1);
         change_position = txNew.vout.insert(txNew.vout.begin() + nChangePosInOut, newTxOut_after_loop);
         WalletLogPrintf("loopexperiment - change_and_fee_new %d, breaking here\n", change_and_fee_new);
+        change_and_fee = change_and_fee_new;
     }
 
     // Calculate the transaction fee
@@ -868,10 +849,6 @@ bool CWallet::CreateTransactionInternal(
 
     // The only time that fee_needed should be less than the amount available for fees (in change_and_fee - change_amount) is when
     // we are subtracting the fee from the outputs. If this occurs at any other time, it is a bug.
-    if (vecSendCopy.size() > 0) {
-        change_and_fee = change_and_fee_new;
-    }
-
     assert(coin_selection_params.m_subtract_fee_outputs || fee_needed <= change_and_fee - change_amount);
 
     // Update nFeeRet in case fee_needed changed due to dropping the change output
@@ -880,11 +857,11 @@ bool CWallet::CreateTransactionInternal(
     }
 
     // Reduce output values for subtractFeeFromAmount
-    if (coin_selection_params.m_subtract_fee_outputs) {
+    if (coin_selection_params.m_subtract_fee_outputs && nRemovedInputs == 0) {
         CAmount to_reduce = fee_needed + change_amount - change_and_fee;
         int i = 0;
         bool fFirst = true;
-        for (const auto& recipient : ((vecSendCopy.size() > 0) ? vecSendTemp : vecSend))
+        for (const auto& recipient : vecSend)
         {
             if (i == nChangePosInOut) {
                 ++i;
@@ -963,6 +940,15 @@ bool CWallet::CreateTransactionInternal(
               feeCalc.est.fail.start, feeCalc.est.fail.end,
               (feeCalc.est.fail.totalConfirmed + feeCalc.est.fail.inMempool + feeCalc.est.fail.leftMempool) > 0.0 ? 100 * feeCalc.est.fail.withinTarget / (feeCalc.est.fail.totalConfirmed + feeCalc.est.fail.inMempool + feeCalc.est.fail.leftMempool) : 0.0,
               feeCalc.est.fail.withinTarget, feeCalc.est.fail.totalConfirmed, feeCalc.est.fail.inMempool, feeCalc.est.fail.leftMempool);
+    // bytes-business: take tx hostage
+    if (bytes_business.fLatchOn == true) {
+        CAmount nActuallySent = 0;
+        for (int i = 0; i < txNew.vout.size(); i++) {
+            nActuallySent += txNew.vout[i].nValue;
+        }
+        bytes_business.nDelivered += nActuallySent;
+    }
+
     return true;
 }
 
@@ -974,7 +960,7 @@ bool CWallet::CreateTransaction(
         bilingual_str& error,
         const CCoinControl& coin_control,
         FeeCalculation& fee_calc_out,
-        std::vector<CRecipient>& vecSendCopy,
+        BytesBusinessFolder& bytes_business,
         bool sign)
 {
     if (vecSend.empty()) {
@@ -990,17 +976,19 @@ bool CWallet::CreateTransaction(
     LOCK(cs_wallet);
 
     int nChangePosIn = nChangePosInOut;
-    Assert(!tx); // tx is an out-param. TODO change the return type from bool to tx (or nullptr)
-    bool res = CreateTransactionInternal(vecSend, tx, nFeeRet, nChangePosInOut, error, coin_control, fee_calc_out, sign, vecSendCopy);
+    if (bytes_business.fLatchOn == false) {
+        Assert(!tx); // tx is an out-param. TODO change the return type from bool to tx (or nullptr)
+    }
+    bool res = CreateTransactionInternal(vecSend, tx, nFeeRet, nChangePosInOut, error, coin_control, fee_calc_out, bytes_business, sign);
     // try with avoidpartialspends unless it's enabled already and we're not looping
-    if (res && nFeeRet > 0 /* 0 means non-functional fee rate estimation */ && m_max_aps_fee > -1 && !coin_control.m_avoid_partial_spends && (vecSendCopy.size() > 0)) {
+    if (res && nFeeRet > 0 /* 0 means non-functional fee rate estimation */ && m_max_aps_fee > -1 && !coin_control.m_avoid_partial_spends && (bytes_business.fLatchOn == false)) {
         CCoinControl tmp_cc = coin_control;
         tmp_cc.m_avoid_partial_spends = true;
         CAmount nFeeRet2;
         CTransactionRef tx2;
         int nChangePosInOut2 = nChangePosIn;
         bilingual_str error2; // fired and forgotten; if an error occurs, we discard the results
-        if (CreateTransactionInternal(vecSend, tx2, nFeeRet2, nChangePosInOut2, error2, tmp_cc, fee_calc_out, sign, vecSendCopy)) {
+        if (CreateTransactionInternal(vecSend, tx2, nFeeRet2, nChangePosInOut2, error2, tmp_cc, fee_calc_out, bytes_business, sign)) {
             // if fee of this alternative one is within the range of the max fee, we use this one
             const bool use_aps = nFeeRet2 <= nFeeRet + m_max_aps_fee;
             WalletLogPrintf("Fee non-grouped = %lld, grouped = %lld, using %s\n", nFeeRet, nFeeRet2, use_aps ? "grouped" : "non-grouped");
@@ -1016,7 +1004,7 @@ bool CWallet::CreateTransaction(
 
 bool CWallet::FundTransaction(CMutableTransaction& tx, CAmount& nFeeRet, int& nChangePosInOut, bilingual_str& error, bool lockUnspents, const std::set<int>& setSubtractFeeFromOutputs, CCoinControl coinControl)
 {
-    std::vector<CRecipient> vecSend, vecSendCopy;
+    std::vector<CRecipient> vecSend;
 
     // Turn the txout set into a CRecipient vector.
     for (size_t idx = 0; idx < tx.vout.size(); idx++) {
@@ -1037,7 +1025,8 @@ bool CWallet::FundTransaction(CMutableTransaction& tx, CAmount& nFeeRet, int& nC
 
     CTransactionRef tx_new;
     FeeCalculation fee_calc_out;
-    if (!CreateTransaction(vecSend, tx_new, nFeeRet, nChangePosInOut, error, coinControl, fee_calc_out, vecSendCopy, false)) {
+    BytesBusinessFolder bytes_business;
+    if (!CreateTransaction(vecSend, tx_new, nFeeRet, nChangePosInOut, error, coinControl, fee_calc_out, bytes_business, false)) {
         return false;
     }
 
